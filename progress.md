@@ -1,6 +1,6 @@
 # Progress — Daily Temperature Resolution Intelligence Platform
 
-_Last updated: 2026-06-15 (session 4 — **first real proxy-vs-official reconciliation ✅**, cloud collection live)_
+_Last updated: 2026-06-15 (session 4 — **first real reconciliation ✅**, token revoked, latency design note written; gate = Jun-20 re-run)_
 
 ## Summary (where we are · accomplished · current state · next steps)
 
@@ -31,6 +31,11 @@ _Last updated: 2026-06-15 (session 4 — **first real proxy-vs-official reconcil
 - **24/7 cloud collection LIVE on GitHub Actions** — laptop-independent. First cloud run verified
   green (2.1-min cycle; wrote 276 markets / 564 prices / 240 resolutions to Neon). Repo
   `github.com/Balkishann/weather-intel`. See [[cloud-collection-github-actions]].
+- **Latency-analysis design note written** (`docs/LATENCY_ANALYSIS_DESIGN.md`) — the full plan
+  (definitions, table joins, methodology, gate, caveats) for the next build step, so we execute
+  fast once the gate passes. Planning only — no code, no execution.
+- **Leaked GH_TOKEN fully handled:** removed from `.env` **and revoked on GitHub** (user deleted
+  the classic token, 2026-06-15). Cloud collection unaffected (uses repo Actions secrets).
 
 ### Current state
 - **Collection runs automatically in the cloud**: `collect-kalshi` every 15 min,
@@ -39,24 +44,23 @@ _Last updated: 2026-06-15 (session 4 — **first real proxy-vs-official reconcil
 - **Reconciliation now has real overlap (2026-06-15):** 1,339 settled high city-days, **19 with
   proxy coverage** (all Jun 12). The 0-overlap window from session 3 is closed; the series will
   keep densifying as each day's highs settle and observations accumulate.
-- **Leaked GH_TOKEN removed from `.env`** (session 4). ⚠️ Still must be **revoked on GitHub** —
-  deleting the line does not invalidate the token.
+- **Waiting on the Jun-20 gate:** n=19 (one day) is too thin to build the latency analysis on.
+  The cloud is accumulating exactly the data the gate needs; nothing to build until it's checked.
 - One cosmetic leftover: a stale `prices running (0)` audit row from the cancelled first cloud run.
 
 ### Next steps
-1. **✅ DONE — first reconciliation run (2026-06-15):** proxies track official within ~1 °C MAE
-   (see "What we've accomplished"). `GH_TOKEN` removed from `.env`.
-2. **⚠️ Revoke the setup GitHub token on GitHub** (GitHub → Settings → Developer settings →
-   Tokens (classic) → delete). Removing the `.env` line does **not** invalidate it.
-3. **Investigate the Los Angeles station mismatch** — the +6.3 °C outlier suggests our geocoded
-   proxy point ≠ the official NWS-CLI station for LA. Likely a few coastal/downtown cities need
-   station-pinned coordinates. Audit which Kalshi cities map to coastal stations.
-4. **Let the series densify** (cloud is running); re-run `report:phase2` periodically — MAE on a
-   larger n is the real validation. Keep `collectResolutions` capturing settlements.
-5. **Then** — once proxy tracking holds on more city-days — build the **latency / mispricing
-   analysis** (align price snapshots to each market's settlement timeline). Still no execution.
-6. _(Lower priority)_ NWS-CLI direct ingestion as a cross-check; geocoding refinement (121
-   unresolved locations); mark stale `running` audit rows.
+1. **✅ DONE (2026-06-15):** first reconciliation run (proxies track official ~1 °C MAE);
+   `GH_TOKEN` removed from `.env` and revoked on GitHub; latency-analysis design note written.
+2. **⏳ THE GATE — re-run `report:phase2` ~Jun 20** (user will run it locally). Confirm proxy
+   MAE still holds ~1–1.5 °C on a larger sample (target ~100+ covered city-days). This is the
+   green light for the latency analysis. If MAE jumps, investigate before building anything.
+3. **Then — build the latency / mispricing analysis** per `docs/LATENCY_ANALYSIS_DESIGN.md`:
+   align `p_mkt(t)` (price snapshots) against `p_info(t)` (forecast revisions + intraday obs),
+   measure latency `Δt` and mispricing vs spread+fees. **Read-only; still no execution.**
+4. **Let the series densify** (cloud is running); keep `collectResolutions` capturing settlements.
+5. _(Lower priority)_ Investigate the **Los Angeles** +6.3 °C station mismatch (coastal cities
+   may need station-pinned coords); NWS-CLI direct ingestion as a cross-check; geocoding
+   refinement (121 unresolved locations); mark stale `running` audit rows.
 
 ## What we're building
 
