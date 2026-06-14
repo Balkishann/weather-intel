@@ -1,0 +1,35 @@
+name: collect-weather
+
+# Hourly weather cycle (forecasts + observations) for the Kalshi temperature markets.
+# See collect-kalshi.yml for the minutes / 60-day-disable notes. The weather cycle is ~12 min,
+# so on a private repo this alone is ~12 min/hour ≈ 8,600 min/month — public repo recommended.
+
+on:
+  schedule:
+    - cron: "0 * * * *" # top of every hour
+  workflow_dispatch: {}
+
+concurrency:
+  group: collect-weather
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run one weather cycle (forecasts + observations)
+        run: pnpm --filter @weather/collector-weather run once
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NWS_USER_AGENT: ${{ secrets.NWS_USER_AGENT }}
+          LOG_LEVEL: info

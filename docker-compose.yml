@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-weather}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-weather}
+      POSTGRES_DB: ${POSTGRES_DB:-weather}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-weather}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: pnpm db:migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weather}:${POSTGRES_PASSWORD:-weather}@postgres:5432/${POSTGRES_DB:-weather}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  collector-polymarket:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: pnpm collect:polymarket
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weather}:${POSTGRES_PASSWORD:-weather}@postgres:5432/${POSTGRES_DB:-weather}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  collector-kalshi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: pnpm collect:kalshi
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weather}:${POSTGRES_PASSWORD:-weather}@postgres:5432/${POSTGRES_DB:-weather}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  collector-weather:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: pnpm collect:weather
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-weather}:${POSTGRES_PASSWORD:-weather}@postgres:5432/${POSTGRES_DB:-weather}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

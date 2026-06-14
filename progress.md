@@ -1,0 +1,230 @@
+# Progress — Daily Temperature Resolution Intelligence Platform
+
+_Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started)_
+
+## What we're building
+
+A **Phase 1 data-collection platform** that builds a complete, append-only historical
+database of daily-temperature prediction markets and the weather data that resolves them.
+The edge being tested (in later phases) is **latency / mispricing** — detecting when public
+weather info is not yet reflected in market prices — **not** forecasting weather better.
+
+**Decision (locked in):** the product is built around **Kalshi**, not Polymarket.
+- Kalshi resolves on the **NWS Climatological Report (Daily)** — official, free, ingestible.
+- Polymarket resolves on **Weather Underground** (no free API) → collector **parked**.
+  ~1,176 Polymarket markets remain in the DB from earlier runs (historical, append-only).
+
+**Scope (reaffirmed by user 2026-06-14):** Kalshi weather (daily-temperature) markets **only**.
+Polymarket is out of scope — do not run/extend its collector. See [[scope-kalshi-only]].
+
+## Phase 2 — resolution intelligence (STARTED 2026-06-14, data-first)
+
+Phase 1 was **signed off by the user**. Phase 2 began with the data foundation only — **no
+signals, no trading logic, no execution** yet.
+
+**Step 1a — Kalshi settlement capture (DONE & validated).** New append-only `market_resolutions`
+table + `collectResolutions()`. Kalshi finalized markets surface the official settlement value
+directly as `expiration_value` (°F — the NWS-CLI high Kalshi resolved on), plus `result`
+(yes/no) and `settlement_ts`. Idempotent on `(market_id, source)` — re-runs add only new
+settlements. **Captured 17,094 settled temperature markets** (16,688 with a settlement value;
+result no=13,989 / yes=3,095 / scalar=10). Wired into `run once` + an hourly cron.
+
+**Step 1c — reconciliation report (BUILT & verified; awaiting overlap).** `report:phase2`
+(`scripts/phase2-reconciliation.ts`, read-only) compares each settled daily-high (`KXHIGH*`)
+official value against our observed daily max + last forecast high, per city-day.
+
+> **Key finding (honest):** reconciliation currently shows **0 overlap**, and that is correct
+> data, not a bug — the join machinery verifiably produces 59 locations for Jun 13. The most
+> recent **settled** high day is **Jun 12**, but our **proxy** collection only starts **Jun 13**
+> (forecasts are forward-only; observations began ~Jun 13). They miss each other by ~1 day.
+> Jun 13 highs settle ~Jun 14–15 AM ET, which will create the first real comparison.
+>
+> **This concretely proves why the schedule must run unattended:** every day the collector is
+> down is a day of **forecast data that can never be backfilled** (you cannot forecast a past
+> day), permanently punching a hole in the latency dataset. The overnight-sleep gap is now a
+> Phase-2 blocker, not just a nicety.
+
+**Step 1b — NWS-CLI ingestion (deferred):** Kalshi already gives the official value via
+`expiration_value`, so direct CLI scraping drops to a *cross-check*, lower priority than
+accumulating forward proxy data.
+
+## What we've accomplished
+
+- **Data collection is LIVE.** Both collectors run end-to-end against Neon Postgres and
+  populate the append-only schema. Validated with two clean manual cycles + a report.
+- **Append-only proven.** Across cycles: market/orderbook snapshots +564 each, forecasts
+  +791, observations +106, markets +0 (identity upsert). Nothing overwritten; each cycle
+  logs a `collection_runs` row + `data_quality_checks`.
+- **Data quality green.** All plausibility/price checks 100% (`forecast_high_plausible`,
+  `obs_*`, `yes_no_sum`, `yes_price_range`). Coverage gaps surfaced honestly (not as fake 0%).
+- **Made it fast & resilient.** A full Kalshi cycle went from **>20 min (crashing) → ~5 min**;
+  discovery alone **~4 min → 45 s**. See "Code changes" below.
+- **Scheduling set up** via Windows Task Scheduler (durable cron equivalent).
+
+### Dataset (live — accumulating via the scheduler)
+
+| Table | After 2 manual cycles | Latest (2026-06-14 s2) | Notes |
+|---|---|---|---|
+| markets (Kalshi temp) | 564 | 660 | dimension; identity-upsert, no duplication |
+| market_snapshots | 2,523 | 5,511 | Kalshi only (Polymarket parked) |
+| orderbook_snapshots | 2,523 | 5,511 | |
+| forecasts | 1,582 | 3,955 | NWS 1,295 + Open-Meteo 2,660; up to 10 revisions/target |
+| observations | 219 | 461 | Open-Meteo (global) + NWS (US) |
+| market_resolutions | — | 17,094 | **Phase 2** — settled outcomes + official °F value (16,688 valued) |
+
+_Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
+`report:phase1` for current totals._
+
+## Code changes — session 3 (2026-06-14, Phase 2 start)
+
+- **`packages/db/src/schema.ts`** — new append-only `market_resolutions` table (unique
+  `(market_id, source)`); migration `0001_careful_sabretooth.sql` generated + applied.
+- **`packages/db/src/repo.ts`** — `insertMarketResolutions` (idempotent `onConflictDoNothing`),
+  `resolvedMarketIds`. **Bug fix:** `recordChecks` now **chunked** (500/insert) — a single
+  insert of 16,688 checks exceeded Postgres's 65,535 bind-param limit (surfaced as the
+  misleading "bind message has N parameter formats but 0 parameters"). The 17,094 resolutions
+  had already committed before that line, so no data was lost.
+- **`services/collector-kalshi/src/kalshi.ts`** — settlement fields on the schema
+  (`result`, `expiration_value`, `settlement_ts`, strikes); `listSettledMarkets` +
+  generalized `listMarketsByStatus`.
+- **`services/collector-kalshi/src/temperature.ts`** — `isSettled`, `parseSettlement`, `fToC`
+  (+ 4 unit tests; 11/11 pass).
+- **`services/collector-kalshi/src/collect.ts`** + **`index.ts`** — `collectResolutions()`
+  wired into `run once` and an hourly cron; **`packages/shared/src/config.ts`** — `resolutions`
+  cron (default `30 * * * *`, env `CRON_RESOLUTIONS`).
+- **`scripts/phase2-reconciliation.ts`** (new) + `report:phase2` — read-only proxy-vs-official
+  reconciliation.
+
+## Code changes — session 2 (2026-06-14)
+
+- **`packages/db/src/repo.ts`** — wrapped the three remaining un-retried audit writes
+  (`startRun`, `finishRun`, `recordChecks`) in **`withRetry`**. These were the only DB writes
+  not already covered. `finishRun`/`recordChecks` run *after* the weather cycle's ~9-min
+  HTTP-only forecast phase — the exact moment Neon is most likely to have dropped the idle
+  pooled connection. A transient drop there previously threw unhandled → `process.exit(1)`,
+  which also orphaned the `collection_runs` row in `running` state (one such stale
+  `kalshi prices running (0)` row from the killed 03:34 scheduled run is visible in the report).
+
+### Investigation: scheduled **weather** run was failing (`LastTaskResult: 1`)
+
+- Symptom: `WeatherIntel-Weather` died right after "running one weather collection cycle"
+  (no forecasts, no `=== exit ===` line), leaving a garbled UTF-16 log fragment.
+- **Manual `run once` succeeded** (exit 0, 791 forecasts + 113 obs, ~12 min) — so the
+  collector is healthy; the failure was an intermittent transient on the long-idle path.
+- **Validated the scheduled path directly** by invoking `scheduled-collect.ps1 -Collector
+  weather`: **exit 0**, 791 forecasts + 113 observations, **clean UTF-8 log** — confirming the
+  current wrapper produces clean logs and the cycle completes end-to-end. The garbled UTF-16
+  lines in `weather.log` are a relic of the old killed run, not the current wrapper.
+- The `withRetry` hardening above closes the last unguarded "Connection terminated" window so
+  a future idle drop at finish can't kill the run or orphan an audit row. (Honest caveat: the
+  original failure was intermittent — not deterministically reproduced — so this is defensive
+  hardening of the documented connection-drop class, validated by a clean scheduled cycle.)
+
+## Code changes — session 1
+
+- **`packages/db/src/client.ts`** — pool `on("error")` handler + `keepAlive: true` so Neon
+  dropping an idle pooled connection no longer crashes the process.
+- **`packages/db/src/repo.ts`** — batched `upsertMarkets` / `insertMarketSnapshots` /
+  `insertOrderbookSnapshots` (chunks of 200); **`withRetry`** wrapper that retries DB writes
+  on transient connection drops ("Connection terminated", ECONNRESET) — the dead client is
+  evicted, the retry gets a fresh connection.
+- **`services/collector-kalshi/src/collect.ts`** — price loop restructured to fetch-all-HTTP
+  → batch-insert; each market wrapped so one failure can't abort the cycle; discovery
+  bulk-upserts; **temperature-only** (non-temp markets skipped).
+- **`services/collector-kalshi/src/index.ts`** — HTTP rate raised (`minIntervalMs` 250→120).
+- **`scripts/phase1-report.ts`** — venue-segmented snapshots; gap-only checks shown as
+  distinct-subject counts instead of a misleading 0% pass-rate.
+- **`scripts/scheduled-collect.ps1`** (new) — Task Scheduler wrapper; `run once` per trigger,
+  logs UTF-8 to `logs/<collector>.log`.
+
+## Current state
+
+- **Manual on-demand collection: fully working and validated.**
+- **Scheduled collection: set up, fixed, and VALIDATED ✅.**
+  - Tasks: `WeatherIntel-Kalshi` (every 15 min), `WeatherIntel-Weather` (every 60 min),
+    both `State=Ready`, overlap-protected (`MultipleInstances IgnoreNew`). Cron is live and
+    self-sustaining (auto next-run scheduled).
+  - Two bugs found & fixed in the scheduled path:
+    1. Wrapper used `$ErrorActionPreference='Stop'`, so the collector's startup Node SSL
+       **stderr warning** was treated as terminating → run died instantly. **Fixed** (merge
+       `2>&1` to UTF-8 log, no `Stop`).
+    2. The fetch-then-flush design leaves DB connections **idle ~5 min** during the HTTP
+       phase, so Neon drops them and the final batch flush failed with "Connection
+       terminated unexpectedly". **Fixed** via the `withRetry` wrapper (above).
+  - **Confirmed by a clean scheduled run**: `=== exit 0 kalshi ===`, task `LastResult=0x0`,
+    588 price snapshots / 0 failed checks, batch flush carried through by the retry.
+  - **Session 2:** the **weather** scheduled path is now validated too — `scheduled-collect.ps1
+    -Collector weather` → `=== exit 0 weather ===`, 791 forecasts + 113 obs, clean UTF-8 log,
+    all DQ checks 100%. Audit-write `withRetry` hardening added so a finish-time idle drop
+    can't kill the run. (Caveat: the older `result=1` weather failure was intermittent.)
+
+## Known gaps / risks
+
+- **Geocoding:** 73 distinct locations fail to geocode (mostly station-name strings, not
+  clean cities). The 76 that resolve still collect fully. Phase 2 refinement.
+- **Stale Polymarket rows** inflate raw market counts; report now flags Kalshi as the anchor.
+- **Orphaned audit rows:** runs killed mid-cycle (machine sleep, etc.) leave a
+  `collection_runs` row stuck in `running` (e.g. `kalshi prices running (0)` from the 03:34
+  killed run). Harmless (next run starts a fresh row) but skews "recent runs"; the `finishRun`
+  retry reduces, not eliminates, this. A Phase-2 cleanup could mark stale `running` rows.
+- **Unattended scheduling — HARDENED 2026-06-14 (session 3).** Overnight killed runs were
+  caused by the machine sleeping mid-run (no battery/idle/time-limit policy — verified). Fixed:
+  both tasks now `WakeToRun=True` + `StartWhenAvailable=True` + `StopOnIdleEnd=False`; power
+  plan set to **never sleep/hibernate on AC** with **wake timers enabled**. So a locked or
+  slept (on-AC) machine no longer drops runs.
+  - **Remaining caveat:** `LogonType=Interactive` → tasks still only run while the user is
+    **logged on** (lock/sleep is now fine; a full log-off stops them). True 24/7 needs
+    `LogonType=Password` (stores the user's password) or S4U, or a deploy target — deferred,
+    user-decision. On battery the no-sleep change does not apply (AC only).
+- Neon free tier auto-pauses when idle; first query wakes it. `price-history points: 0` is
+  expected (we rely on forward snapshots). Docker/WSL unavailable → run via `tsx`/pnpm.
+
+## How to run
+
+```
+npx --yes pnpm@9 --filter @weather/collector-kalshi run once     # markets + price/book snapshots
+npx --yes pnpm@9 --filter @weather/collector-weather run once    # forecasts + observations
+npx --yes pnpm@9 --filter @weather/collector-kalshi run once     # markets + prices + resolutions
+npx --yes pnpm@9 report:phase1                                   # read-only coverage/quality report
+npx --yes pnpm@9 report:phase2                                   # proxy-vs-official reconciliation
+# scheduled tasks: Get-ScheduledTask WeatherIntel-* | Start-ScheduledTask | Disable-ScheduledTask
+```
+
+## Next steps (Phase 2)
+
+1. **✅ Unattended scheduling hardened** (wake-to-run + never-sleep-on-AC + wake timers; see
+   Known gaps). Series can now densify on a logged-on, AC-powered machine. _Residual:_ keep the
+   machine logged on + plugged in; for true 24/7 move to `LogonType=Password`/S4U or a deploy
+   target.
+2. **Re-run `report:phase2` after Jun 13+ highs settle** (≈Jun 14–15 AM ET) — the first real
+   proxy-vs-official comparison. Confirms (or refutes) the Phase-1 assumption that NWS/Open-Meteo
+   track the official NWS-CLI settlement value.
+3. **Keep `collectResolutions` running hourly** — back-captures recently settled markets
+   idempotently; the resolution-truth table is the spine of all later latency analysis.
+4. **Then** (only once proxies are shown to track official values): align price snapshots to
+   each market's settlement timeline and measure **price-vs-information latency**. Still no
+   execution.
+5. _(Lower priority)_ NWS-CLI direct ingestion as a cross-check on `expiration_value`;
+   geocoding refinement for the 121 unresolved location strings.
+
+## End-of-Phase-1 review
+
+**Requirements verification**
+- ✅ Append-only history — verified counts strictly increase, dimension upserts without
+  duplication, nothing overwritten.
+- ✅ Both collectors land real data — Kalshi markets/prices/books + weather forecasts/obs.
+- ✅ Data quality — all plausibility/price checks 100%; coverage gaps surfaced transparently.
+- ✅ Reproducible & transparent — every cycle logs a `collection_runs` row + DQ checks.
+- ✅ Unattended reliability — scheduled run confirmed `exit 0`; cron self-sustaining.
+
+**Facts** — the pipeline reliably collects and persists Kalshi temperature markets and their
+NWS / Open-Meteo resolution proxies; forecast revisions are being captured.
+
+**Assumptions (unvalidated — Phase 2+)** — that NWS/Open-Meteo proxy the NWS-CLI resolution
+value well; that snapshot cadence is dense enough to detect latency; that mispricing exists
+at all. **No profitability or predictive power is claimed.**
+
+**Risks** — geocoding gaps reduce city coverage; logged-on-only scheduling; Neon free-tier limits.
+
+**Recommended next step** — let the schedule accumulate data, then get sign-off to start
+Phase 2. **Phase 1 is functionally complete and self-running.**

@@ -1,0 +1,40 @@
+name: collect-kalshi
+
+# Cloud replacement for the Windows Task Scheduler job. Each tick runs ONE ephemeral
+# `run once` cycle (markets + prices + resolutions) and writes to Neon, then exits — the
+# same model the local scheduler used, so no long-lived server is needed.
+#
+# Minutes note: scheduled Actions are FREE & unlimited on PUBLIC repos. On PRIVATE repos
+# they consume the 2,000 min/month free quota — every-15-min here would blow past it, so on
+# a private repo raise the interval (e.g. "0 */2 * * *") or make the repo public.
+# GitHub also DISABLES scheduled workflows after 60 days with no repo activity.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 min (GitHub may delay/coalesce under load)
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: collect-kalshi
+  cancel-in-progress: false # queue, never overlap (collectors are idempotent but serial is cleaner)
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run one Kalshi cycle (markets + prices + resolutions)
+        run: pnpm --filter @weather/collector-kalshi run once
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NWS_USER_AGENT: ${{ secrets.NWS_USER_AGENT }}
+          LOG_LEVEL: info

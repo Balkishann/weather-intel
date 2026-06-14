@@ -1,0 +1,27 @@
+# Secrets — NEVER commit
+.env
+.env.local
+credentials.json
+token.json
+
+# Node / pnpm
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.pnpm-store/
+
+# Drizzle
+drizzle/meta/_journal.json.bak
+
+# Logs & scratch
+logs/
+*.log
+.tmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

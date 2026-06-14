@@ -1,0 +1,31 @@
+name: db-migrate
+
+# Manual-only: apply generated Drizzle migrations to Neon from CI (idempotent). Run this from
+# the Actions tab after merging a schema change, so the production DB stays in sync without
+# needing a local machine. Never scheduled.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: db-migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply migrations
+        run: pnpm --filter @weather/db run migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
