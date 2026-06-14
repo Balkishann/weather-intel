@@ -1,6 +1,6 @@
 # Progress — Daily Temperature Resolution Intelligence Platform
 
-_Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started, **cloud collection LIVE ✅**)_
+_Last updated: 2026-06-15 (session 4 — **first real proxy-vs-official reconciliation ✅**, cloud collection live)_
 
 ## Summary (where we are · accomplished · current state · next steps)
 
@@ -14,6 +14,13 @@ _Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started
 ### What we've accomplished
 - **Append-only pipeline on Neon Postgres** collecting Kalshi markets / prices / order books +
   NWS & Open-Meteo forecasts / observations. Data-quality checks all 100%; nothing overwritten.
+- **Phase 2 Step 1c — FIRST REAL RECONCILIATION (2026-06-15):** overlap finally arrived — **19
+  settled city-days** now have proxy coverage. **Proxies track the official NWS-CLI settlement
+  value well: observed-max MAE 1.0 °C, forecast-high MAE 1.3 °C.** This validates the core
+  Phase-1 assumption (NWS/Open-Meteo proxy the official resolution value) on real overlapping
+  data — no longer just an assumption. One clear outlier: **Los Angeles** (official 22.2 °C vs
+  obs-max 28.5 / fc 27.8, Δ +6.3 °C) — a station-mismatch signature (coastal/downtown official
+  station vs a hotter inland proxy point), not random noise. All other cities within ~2 °C.
 - **Phase 2 Step 1a — settlement truth captured:** new `market_resolutions` table +
   `collectResolutions()`. **17,094 settled markets** recorded with their official settlement
   temperature (Kalshi's `expiration_value`, °F) and yes/no result (16,688 valued).
@@ -29,21 +36,26 @@ _Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started
 - **Collection runs automatically in the cloud**: `collect-kalshi` every 15 min,
   `collect-weather` hourly — data flowing to Neon without the laptop. Local Windows tasks are now
   a redundant backup (safe to disable).
-- **Reconciliation shows 0 overlap so far — expected, not a bug:** settled days reach only
-  **Jun 12**, our weather proxies start **Jun 13** (forecasts are forward-only). They'll overlap
-  within ~1 day as Jun 13+ highs settle, producing the first real proxy-vs-official comparison.
+- **Reconciliation now has real overlap (2026-06-15):** 1,339 settled high city-days, **19 with
+  proxy coverage** (all Jun 12). The 0-overlap window from session 3 is closed; the series will
+  keep densifying as each day's highs settle and observations accumulate.
+- **Leaked GH_TOKEN removed from `.env`** (session 4). ⚠️ Still must be **revoked on GitHub** —
+  deleting the line does not invalidate the token.
 - One cosmetic leftover: a stale `prices running (0)` audit row from the cancelled first cloud run.
 
 ### Next steps
-1. **Revoke the setup GitHub token** (it appeared in chat) and remove `GH_TOKEN` from `.env`;
-   optionally `Disable-ScheduledTask WeatherIntel-*` to stop double-collecting.
-2. **Re-run `report:phase2`** once Jun 13+ highs settle (≈Jun 14–15 AM ET) — the first real test
-   of whether NWS/Open-Meteo proxies track the official NWS-CLI settlement value.
-3. **Let the series densify** (cloud is running); keep `collectResolutions` capturing settlements.
-4. **Then** — only after proxies are shown to track official values — build the **latency /
-   mispricing analysis** (align price snapshots to each market's settlement timeline). Still no
-   execution.
-5. _(Lower priority)_ NWS-CLI direct ingestion as a cross-check; geocoding refinement (121
+1. **✅ DONE — first reconciliation run (2026-06-15):** proxies track official within ~1 °C MAE
+   (see "What we've accomplished"). `GH_TOKEN` removed from `.env`.
+2. **⚠️ Revoke the setup GitHub token on GitHub** (GitHub → Settings → Developer settings →
+   Tokens (classic) → delete). Removing the `.env` line does **not** invalidate it.
+3. **Investigate the Los Angeles station mismatch** — the +6.3 °C outlier suggests our geocoded
+   proxy point ≠ the official NWS-CLI station for LA. Likely a few coastal/downtown cities need
+   station-pinned coordinates. Audit which Kalshi cities map to coastal stations.
+4. **Let the series densify** (cloud is running); re-run `report:phase2` periodically — MAE on a
+   larger n is the real validation. Keep `collectResolutions` capturing settlements.
+5. **Then** — once proxy tracking holds on more city-days — build the **latency / mispricing
+   analysis** (align price snapshots to each market's settlement timeline). Still no execution.
+6. _(Lower priority)_ NWS-CLI direct ingestion as a cross-check; geocoding refinement (121
    unresolved locations); mark stale `running` audit rows.
 
 ## What we're building
@@ -77,11 +89,13 @@ result no=13,989 / yes=3,095 / scalar=10). Wired into `run once` + an hourly cro
 (`scripts/phase2-reconciliation.ts`, read-only) compares each settled daily-high (`KXHIGH*`)
 official value against our observed daily max + last forecast high, per city-day.
 
-> **Key finding (honest):** reconciliation currently shows **0 overlap**, and that is correct
-> data, not a bug — the join machinery verifiably produces 59 locations for Jun 13. The most
-> recent **settled** high day is **Jun 12**, but our **proxy** collection only starts **Jun 13**
-> (forecasts are forward-only; observations began ~Jun 13). They miss each other by ~1 day.
-> Jun 13 highs settle ~Jun 14–15 AM ET, which will create the first real comparison.
+> **Key finding (2026-06-15, UPDATED):** overlap arrived — **19 settled city-days** now carry
+> proxy coverage, and the proxies **track the official NWS-CLI value within ~1 °C**: observed-max
+> MAE **1.0 °C**, forecast-high MAE **1.3 °C** (n=19, all Jun 12). This is the first evidence
+> (not assumption) that NWS/Open-Meteo proxy the official resolution value. **Outlier: Los Angeles**
+> Δ +6.3 °C — a station-mismatch signature (official coastal/downtown station vs hotter inland
+> proxy), flagged for geocoding follow-up. The earlier 0-overlap state was a ~1-day timing gap
+> (settled days reached Jun 12; proxies started ~Jun 12–13), now closed.
 >
 > **This concretely proves why the schedule must run unattended:** every day the collector is
 > down is a day of **forecast data that can never be backfilled** (you cannot forecast a past
