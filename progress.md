@@ -179,6 +179,26 @@ _Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
 - Neon free tier auto-pauses when idle; first query wakes it. `price-history points: 0` is
   expected (we rely on forward snapshots). Docker/WSL unavailable → run via `tsx`/pnpm.
 
+## Cloud deployment — GitHub Actions (free 24/7, session 3)
+
+To stop depending on the laptop, collection can run as scheduled GitHub Actions (each tick = one
+ephemeral `run once` → writes to Neon → exits; same model as the local scheduler). Workflows
+added: `.github/workflows/collect-kalshi.yml` (*/15), `collect-weather.yml` (hourly),
+`db-migrate.yml` (manual). Repo is `git init`'d + committed on `main`.
+
+**Remaining manual steps (need the user's GitHub account):**
+1. Create a GitHub repo and push `main` (gh: `gh repo create <name> --public --source=. --push`,
+   or add a remote + `git push -u origin main`).
+2. Add repo secret **`DATABASE_URL`** (copy from local `.env`) and optionally `NWS_USER_AGENT`,
+   under Settings → Secrets and variables → Actions.
+3. Trigger once via "Run workflow" (workflow_dispatch) to validate, then it self-schedules.
+
+**Free-tier notes:** scheduled Actions are unlimited on **public** repos; **private** repos get
+2,000 min/month (too little for these intervals → raise cadence or go public). Scheduled
+workflows auto-disable after 60 days of repo inactivity; cron is best-effort (may be delayed).
+Once cloud collection is confirmed, the Windows scheduled tasks can be disabled to avoid
+double-collection (harmless if both run — inserts are idempotent/append-only).
+
 ## How to run
 
 ```
