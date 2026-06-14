@@ -187,9 +187,9 @@ export class KalshiCollector {
     let count = 0;
     const checks: Parameters<Repo["recordChecks"]>[1] = [];
     try {
-      const markets = (await this.repo.temperatureMarkets()).filter(
-        (m) => m.venue === "kalshi",
-      );
+      // Only OPEN markets: settled markets (now in the dimension via collectResolutions) have
+      // no live order book, and polling all ~17k of them blows past the CI job timeout.
+      const markets = await this.repo.pricableKalshiMarkets();
       // Phase A — fetch all live prices/books over HTTP and build snapshot rows in memory.
       // No DB writes here, so pooled connections never sit idle through the throttled HTTP
       // loop (which is what triggered Neon to drop them mid-run).

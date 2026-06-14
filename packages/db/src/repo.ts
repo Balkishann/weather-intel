@@ -251,6 +251,25 @@ export class Repo {
       .where(sql`${markets.isTemperatureMarket} = true`);
   }
 
+  /**
+   * Kalshi temperature markets that are still tradeable — i.e. have NO recorded resolution.
+   * `collectResolutions` upserts every settled market into `markets` (for the FK), which would
+   * otherwise balloon the price loop from ~hundreds of open markets to tens of thousands of
+   * dead ones. Settled markets have no live order book, so we skip them when snapshotting.
+   */
+  async pricableKalshiMarkets() {
+    return this.db
+      .select()
+      .from(markets)
+      .where(
+        sql`${markets.isTemperatureMarket} = true
+            and ${markets.venue} = 'kalshi'
+            and not exists (
+              select 1 from market_resolutions r where r.market_id = ${markets.marketId}
+            )`,
+      );
+  }
+
   /** Distinct resolution stations referenced by temperature markets. */
   async temperatureStations(): Promise<string[]> {
     const rows = await this.db
