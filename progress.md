@@ -94,6 +94,11 @@ _Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
   cron (default `30 * * * *`, env `CRON_RESOLUTIONS`).
 - **`scripts/phase2-reconciliation.ts`** (new) + `report:phase2` — read-only proxy-vs-official
   reconciliation.
+- **Regression fix — price loop.** `collectResolutions` upserts every settled market into the
+  `markets` dimension (FK), which ballooned `temperatureMarkets()` from ~564 open markets to
+  **17,658**, so `collectPrices` tried to fetch order books for ~17k dead markets and blew the
+  CI 20-min timeout. Added `repo.pricableKalshiMarkets()` (kalshi temp markets with NO recorded
+  resolution) and switched `collectPrices` to it. Found via the first GitHub Actions run.
 
 ## Code changes — session 2 (2026-06-14)
 
