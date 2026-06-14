@@ -1,6 +1,17 @@
 # Progress — Daily Temperature Resolution Intelligence Platform
 
-_Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started)_
+_Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started, **cloud collection LIVE ✅**)_
+
+## TL;DR — current status
+
+- **Phase 1 (data collection): complete & signed off.** Append-only Kalshi + weather pipeline on Neon.
+- **Phase 2 (resolution intelligence): started.** Settlement-truth capture done (17,094 settled
+  markets with official °F values); reconciliation report built (awaiting date overlap).
+- **Collection now runs 24/7 in the cloud** on GitHub Actions — **no longer depends on the laptop.**
+  Repo: `github.com/Balkishann/weather-intel`. First cloud run verified green (2.1-min cycle,
+  wrote 276 markets / 564 prices / 240 resolutions to Neon). See [[cloud-collection-github-actions]].
+- **Scope: Kalshi weather markets only.** Polymarket out of scope. See [[scope-kalshi-only]].
+- **No signals / trading / execution yet** — and none until the data foundation is validated.
 
 ## What we're building
 
@@ -63,17 +74,18 @@ accumulating forward proxy data.
 
 ### Dataset (live — accumulating via the scheduler)
 
-| Table | After 2 manual cycles | Latest (2026-06-14 s2) | Notes |
+| Table | 2 manual cycles | Latest (2026-06-14, post-cloud) | Notes |
 |---|---|---|---|
-| markets (Kalshi temp) | 564 | 660 | dimension; identity-upsert, no duplication |
-| market_snapshots | 2,523 | 5,511 | Kalshi only (Polymarket parked) |
-| orderbook_snapshots | 2,523 | 5,511 | |
+| markets (Kalshi temp) | 564 | ~17,658 | dimension; **564 open + 17,094 settled** (settled upserted for FK) |
+| market_snapshots | 2,523 | 9,115 | Kalshi only (Polymarket parked); price loop polls the 564 OPEN markets |
+| orderbook_snapshots | 2,523 | ~9,100 | |
 | forecasts | 1,582 | 3,955 | NWS 1,295 + Open-Meteo 2,660; up to 10 revisions/target |
 | observations | 219 | 461 | Open-Meteo (global) + NWS (US) |
 | market_resolutions | — | 17,094 | **Phase 2** — settled outcomes + official °F value (16,688 valued) |
 
-_Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
-`report:phase1` for current totals._
+_Counts now grow continuously via the cloud Actions schedule. Re-run `report:phase1` /
+`report:phase2` for live totals. Note: only the **564 open** markets get price snapshots;
+settled markets live in the dimension + `market_resolutions` only._
 
 ## Code changes — session 3 (2026-06-14, Phase 2 start)
 
@@ -144,8 +156,11 @@ _Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
 
 ## Current state
 
+- **Cloud collection (PRIMARY): LIVE on GitHub Actions ✅** — runs 24/7 independent of the
+  laptop. See the Cloud deployment section below. This is now the main collection path.
 - **Manual on-demand collection: fully working and validated.**
-- **Scheduled collection: set up, fixed, and VALIDATED ✅.**
+- **Local Windows scheduled collection: set up, fixed, VALIDATED ✅ — now a redundant backup**
+  (superseded by the cloud; safe to disable).
   - Tasks: `WeatherIntel-Kalshi` (every 15 min), `WeatherIntel-Weather` (every 60 min),
     both `State=Ready`, overlap-protected (`MultipleInstances IgnoreNew`). Cron is live and
     self-sustaining (auto next-run scheduled).
@@ -184,43 +199,47 @@ _Snapshots ~doubled as the every-15-min schedule builds the time series. Re-run
 - Neon free tier auto-pauses when idle; first query wakes it. `price-history points: 0` is
   expected (we rely on forward snapshots). Docker/WSL unavailable → run via `tsx`/pnpm.
 
-## Cloud deployment — GitHub Actions (free 24/7, session 3)
+## Cloud deployment — GitHub Actions (LIVE ✅, session 3)
 
-To stop depending on the laptop, collection can run as scheduled GitHub Actions (each tick = one
-ephemeral `run once` → writes to Neon → exits; same model as the local scheduler). Workflows
-added: `.github/workflows/collect-kalshi.yml` (*/15), `collect-weather.yml` (hourly),
-`db-migrate.yml` (manual). Repo is `git init`'d + committed on `main`.
+Collection now runs 24/7 on GitHub Actions — the laptop is no longer required. Each tick is one
+ephemeral `run once` → writes to Neon → exits (same model as the local scheduler).
 
-**Remaining manual steps (need the user's GitHub account):**
-1. Create a GitHub repo and push `main` (gh: `gh repo create <name> --public --source=. --push`,
-   or add a remote + `git push -u origin main`).
-2. Add repo secret **`DATABASE_URL`** (copy from local `.env`) and optionally `NWS_USER_AGENT`,
-   under Settings → Secrets and variables → Actions.
-3. Trigger once via "Run workflow" (workflow_dispatch) to validate, then it self-schedules.
+- **Repo:** `github.com/Balkishann/weather-intel` (public → unlimited free Actions minutes).
+  Owner name kept as-is per user. Set up via the GitHub REST API + a temporary classic PAT.
+- **Workflows:** `.github/workflows/collect-kalshi.yml` (*/15 — markets+prices+resolutions),
+  `collect-weather.yml` (hourly), `db-migrate.yml` (manual, for applying schema changes).
+- **Secrets** (encrypted, set via API): `DATABASE_URL`, `NWS_USER_AGENT`.
+- **Verified working:** run #2 succeeded — collector step **2.1 min** — and wrote fresh rows to
+  Neon (`kalshi markets ok(276)`, `prices ok(564)`, `resolutions ok(240)`), laptop uninvolved.
+  Run #1 had failed at the 20-min timeout → see the price-loop regression fix in Code changes s3.
 
-**Free-tier notes:** scheduled Actions are unlimited on **public** repos; **private** repos get
-2,000 min/month (too little for these intervals → raise cadence or go public). Scheduled
-workflows auto-disable after 60 days of repo inactivity; cron is best-effort (may be delayed).
-Once cloud collection is confirmed, the Windows scheduled tasks can be disabled to avoid
-double-collection (harmless if both run — inserts are idempotent/append-only).
+**Notes / housekeeping:**
+- **Revoke the setup PAT** (it was pasted in chat) — GitHub → Settings → Developer settings →
+  Tokens (classic) → delete; remove the `GH_TOKEN=` line from `.env`. Everything keeps running.
+- The local **Windows tasks are now redundant** — disable to avoid double-collection
+  (`Disable-ScheduledTask WeatherIntel-*`). Harmless if left (inserts are idempotent/append-only).
+- Scheduled Actions auto-disable after **60 days of repo inactivity**; GitHub cron is best-effort
+  (can be delayed/coalesced under load). Pushing needs the user's GitHub auth (no `gh` CLI locally).
 
 ## How to run
 
 ```
-npx --yes pnpm@9 --filter @weather/collector-kalshi run once     # markets + price/book snapshots
-npx --yes pnpm@9 --filter @weather/collector-weather run once    # forecasts + observations
+# Local manual runs (the cloud does this automatically now):
 npx --yes pnpm@9 --filter @weather/collector-kalshi run once     # markets + prices + resolutions
+npx --yes pnpm@9 --filter @weather/collector-weather run once    # forecasts + observations
 npx --yes pnpm@9 report:phase1                                   # read-only coverage/quality report
 npx --yes pnpm@9 report:phase2                                   # proxy-vs-official reconciliation
-# scheduled tasks: Get-ScheduledTask WeatherIntel-* | Start-ScheduledTask | Disable-ScheduledTask
+
+# Cloud (primary): GitHub Actions runs collect-kalshi (*/15) + collect-weather (hourly)
+#   on github.com/Balkishann/weather-intel — trigger/inspect from the repo's Actions tab.
+# Local Windows tasks (now redundant backup): Get-ScheduledTask WeatherIntel-* | Disable-ScheduledTask
 ```
 
 ## Next steps (Phase 2)
 
-1. **✅ Unattended scheduling hardened** (wake-to-run + never-sleep-on-AC + wake timers; see
-   Known gaps). Series can now densify on a logged-on, AC-powered machine. _Residual:_ keep the
-   machine logged on + plugged in; for true 24/7 move to `LogonType=Password`/S4U or a deploy
-   target.
+1. **✅ Unattended 24/7 collection SOLVED via GitHub Actions** (cloud, laptop-independent — see
+   Cloud deployment). Supersedes the local wake-to-run hardening. The latency series now
+   densifies continuously. _Action:_ revoke the setup PAT; optionally disable the Windows tasks.
 2. **Re-run `report:phase2` after Jun 13+ highs settle** (≈Jun 14–15 AM ET) — the first real
    proxy-vs-official comparison. Confirms (or refutes) the Phase-1 assumption that NWS/Open-Meteo
    track the official NWS-CLI settlement value.
