@@ -2,16 +2,49 @@
 
 _Last updated: 2026-06-14 (session 3 — Phase 1 signed off ✅, Phase 2 started, **cloud collection LIVE ✅**)_
 
-## TL;DR — current status
+## Summary (where we are · accomplished · current state · next steps)
 
-- **Phase 1 (data collection): complete & signed off.** Append-only Kalshi + weather pipeline on Neon.
-- **Phase 2 (resolution intelligence): started.** Settlement-truth capture done (17,094 settled
-  markets with official °F values); reconciliation report built (awaiting date overlap).
-- **Collection now runs 24/7 in the cloud** on GitHub Actions — **no longer depends on the laptop.**
-  Repo: `github.com/Balkishann/weather-intel`. First cloud run verified green (2.1-min cycle,
-  wrote 276 markets / 564 prices / 240 resolutions to Neon). See [[cloud-collection-github-actions]].
-- **Scope: Kalshi weather markets only.** Polymarket out of scope. See [[scope-kalshi-only]].
-- **No signals / trading / execution yet** — and none until the data foundation is validated.
+### Where we are
+- **Phase 1 (data collection): complete and user-signed-off.** **Phase 2 (resolution
+  intelligence): started**, data-first. **No signals, trading, or execution** — and none until
+  the data foundation is validated.
+- **Scope: Kalshi daily-temperature markets only.** Polymarket is out of scope / parked. See
+  [[scope-kalshi-only]].
+
+### What we've accomplished
+- **Append-only pipeline on Neon Postgres** collecting Kalshi markets / prices / order books +
+  NWS & Open-Meteo forecasts / observations. Data-quality checks all 100%; nothing overwritten.
+- **Phase 2 Step 1a — settlement truth captured:** new `market_resolutions` table +
+  `collectResolutions()`. **17,094 settled markets** recorded with their official settlement
+  temperature (Kalshi's `expiration_value`, °F) and yes/no result (16,688 valued).
+- **Phase 2 Step 1c — reconciliation report** (`report:phase2`) built & verified: compares each
+  settled daily-high official value vs our observed-max / forecast-high proxies.
+- **Reliability hardening:** DB retry on all writes, chunked DQ inserts (65k bind-param fix),
+  and a price-loop fix (poll only the 564 OPEN markets, not the 17k settled ones).
+- **24/7 cloud collection LIVE on GitHub Actions** — laptop-independent. First cloud run verified
+  green (2.1-min cycle; wrote 276 markets / 564 prices / 240 resolutions to Neon). Repo
+  `github.com/Balkishann/weather-intel`. See [[cloud-collection-github-actions]].
+
+### Current state
+- **Collection runs automatically in the cloud**: `collect-kalshi` every 15 min,
+  `collect-weather` hourly — data flowing to Neon without the laptop. Local Windows tasks are now
+  a redundant backup (safe to disable).
+- **Reconciliation shows 0 overlap so far — expected, not a bug:** settled days reach only
+  **Jun 12**, our weather proxies start **Jun 13** (forecasts are forward-only). They'll overlap
+  within ~1 day as Jun 13+ highs settle, producing the first real proxy-vs-official comparison.
+- One cosmetic leftover: a stale `prices running (0)` audit row from the cancelled first cloud run.
+
+### Next steps
+1. **Revoke the setup GitHub token** (it appeared in chat) and remove `GH_TOKEN` from `.env`;
+   optionally `Disable-ScheduledTask WeatherIntel-*` to stop double-collecting.
+2. **Re-run `report:phase2`** once Jun 13+ highs settle (≈Jun 14–15 AM ET) — the first real test
+   of whether NWS/Open-Meteo proxies track the official NWS-CLI settlement value.
+3. **Let the series densify** (cloud is running); keep `collectResolutions` capturing settlements.
+4. **Then** — only after proxies are shown to track official values — build the **latency /
+   mispricing analysis** (align price snapshots to each market's settlement timeline). Still no
+   execution.
+5. _(Lower priority)_ NWS-CLI direct ingestion as a cross-check; geocoding refinement (121
+   unresolved locations); mark stale `running` audit rows.
 
 ## What we're building
 
