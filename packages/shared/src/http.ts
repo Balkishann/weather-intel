@@ -16,6 +16,14 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Per-request timeout in ms. */
   timeoutMs?: number;
+  /**
+   * Override the client's max retry attempts for this request. Use a low value (0/1) for
+   * best-effort upstreams that rate-limit (429): retrying a 429 with the default backoff turns
+   * a rate limit into a multi-minute stall per call, which can blow a whole batch's timeout.
+   */
+  maxRetries?: number;
+  /** Cap per-attempt backoff for this request (ms); also clamps a server Retry-After. */
+  maxBackoffMs?: number;
 }
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -67,13 +75,14 @@ export class HttpClient {
     opts: RequestOptions,
     host: string,
   ): Promise<Response> {
+    const maxRetries = opts.maxRetries ?? this.maxRetries;
     let attempt = 0;
     for (;;) {
       try {
         const res = await this.fetchOnce(url, opts);
         if (res.ok) return res;
-        if (RETRYABLE_STATUS.has(res.status) && attempt < this.maxRetries) {
-          const wait = this.backoff(attempt, res.headers.get("retry-after"));
+        if (RETRYABLE_STATUS.has(res.status) && attempt < maxRetries) {
+          const wait = this.backoff(attempt, res.headers.get("retry-after"), opts.maxBackoffMs);
           this.log.warn(
             { url, status: res.status, attempt, waitMs: wait },
             "retryable HTTP status, backing off",
@@ -90,8 +99,8 @@ export class HttpClient {
         const isAbortOrNetwork =
           err instanceof Error &&
           !err.message.startsWith("HTTP ") /* not our thrown status error */;
-        if (isAbortOrNetwork && attempt < this.maxRetries) {
-          const wait = this.backoff(attempt, null);
+        if (isAbortOrNetwork && attempt < maxRetries) {
+          const wait = this.backoff(attempt, null, opts.maxBackoffMs);
           this.log.warn(
             { url, host, attempt, waitMs: wait, err: (err as Error).message },
             "network error, backing off",
@@ -121,13 +130,13 @@ export class HttpClient {
     }
   }
 
-  private backoff(attempt: number, retryAfter: string | null): number {
+  private backoff(attempt: number, retryAfter: string | null, maxMs = 60_000): number {
     if (retryAfter) {
       const secs = Number(retryAfter);
-      if (Number.isFinite(secs)) return Math.min(secs * 1000, 60_000);
+      if (Number.isFinite(secs)) return Math.min(secs * 1000, maxMs);
     }
     const expo = this.baseBackoffMs * 2 ** attempt;
     const jitter = Math.random() * this.baseBackoffMs;
-    return Math.min(expo + jitter, 60_000);
+    return Math.min(expo + jitter, maxMs);
   }
 }

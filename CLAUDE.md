@@ -1,13 +1,23 @@
-# Polymarket Daily Temperature Resolution Intelligence Platform
+# Kalshi Daily Temperature Resolution Intelligence Platform
 
 ## What this is
 
 A platform to detect when **publicly available weather information is not yet reflected in
-Polymarket daily-temperature market prices**. The edge being tested is *latency / mispricing*,
+Kalshi daily-temperature market prices**. The edge being tested is *latency / mispricing*,
 **not** forecasting weather better than professional agencies.
 
-This is built **phase-by-phase**. We are currently building **Phase 1 only: data collection.**
-No signals, no trading logic, no execution until earlier phases are validated.
+This is built **phase-by-phase**. **Phase 1 (data collection) is complete and signed off.**
+We are now in **Phase 2: resolution intelligence**, built **data-first** — settlement-truth
+capture and proxy-vs-official reconciliation, then a read-only latency/mispricing analysis.
+**No signals, no trading logic, no execution** until earlier phases are validated.
+
+## Scope (locked in)
+
+- **Kalshi daily-temperature markets ONLY.** Kalshi resolves on the **NWS Climatological Report
+  (Daily)** — an official, free, ingestible source.
+- **Polymarket is out of scope** and has been removed from the codebase (it resolved on Weather
+  Underground, which has no free API). Some historical Polymarket rows may remain in the DB from
+  early runs — they are append-only history and are simply ignored.
 
 ## Non-negotiable principles
 
@@ -24,48 +34,47 @@ No signals, no trading logic, no execution until earlier phases are validated.
 
 ## Tech stack
 
-- **Frontend** (Phase 8, deferred): Next.js + TypeScript + Tailwind, dark mode.
+- **Frontend** (deferred): Next.js + TypeScript + Tailwind, dark mode.
 - **Backend**: Node.js + TypeScript.
-- **Database**: PostgreSQL (append-only temporal schema).
+- **Database**: PostgreSQL (append-only temporal schema; Neon in the cloud).
 - **Cache**: Redis.
-- **Deployment**: Docker / docker-compose.
+- **Deployment**: Docker / docker-compose locally; 24/7 collection on GitHub Actions.
 - Monorepo via **pnpm workspaces**. ORM: **Drizzle**. Validation: **Zod**. Logs: **pino**. Tests: **Vitest**.
 
 ## Repository layout
 
 ```
-packages/shared              config, logger, rate-limited HTTP client, shared zod schemas & types
-packages/db                  Drizzle schema (append-only tables), migrations, query helpers
-services/collector-polymarket  Gamma markets + CLOB books/prices/midpoints + resolution parsing
-services/collector-kalshi      Kalshi temperature series/markets/orderbooks + NWS-CLI resolution
-services/collector-weather     NWS + Open-Meteo: forecasts, forecast revisions, observations
-scripts                      backfill (prices-history, Open-Meteo archive), phase1 report, migrate
-docker-compose.yml           postgres + redis + collector services
+packages/shared             config, logger, rate-limited HTTP client, shared zod schemas & types
+packages/db                 Drizzle schema (append-only tables), migrations, query helpers
+services/collector-kalshi   Kalshi temperature series/markets/orderbooks + NWS-CLI resolution + settlement capture
+services/collector-weather  NWS + Open-Meteo: forecasts, forecast revisions, observations
+scripts                     backfill (Open-Meteo archive), phase1 report, phase2 reconciliation + latency
+docker-compose.yml          postgres + redis + collector services
 ```
 
-Both exchanges run the same daily-temperature markets; the `markets.venue` column
-distinguishes them (`polymarket` | `kalshi`). The weather collector serves both.
+The `markets.venue` column distinguishes exchanges; only `kalshi` is collected now.
 
 ## Data sources
 
-- **Polymarket Gamma API** (`https://gamma-api.polymarket.com`, public): discover via
-  `/events?tag_slug=weather`, fetch detail via `/markets/{id}`. Resolves on **Wunderground**
-  (airport station, °C) — Wunderground has no free API, so NWS/Open-Meteo serve as proxies.
-- **Polymarket CLOB API** (`https://clob.polymarket.com`, public reads): `/book`, `/price`,
-  `/midpoint`, `/prices-history` (coarse for resolved markets — capture our own snapshots).
 - **Kalshi API** (`https://api.elections.kalshi.com/trade-api/v2`, public reads, no auth):
   discover temperature series under category `Climate and Weather` (tag "Daily temperature"),
   then `/markets?series_ticker=`, `/markets/{ticker}`, `/markets/{ticker}/orderbook`. Resolves
-  on the **NWS Climatological Report (Daily)** in °F — an official, **free** resolution source.
-- **NWS** (`https://api.weather.gov`, free, requires a `User-Agent` header).
+  on the **NWS Climatological Report (Daily)** in °F. Finalized markets surface the official
+  settlement value directly as `expiration_value`.
+- **NWS** (`https://api.weather.gov`, free, requires a `User-Agent` header): forecasts + observations.
 - **Open-Meteo** (free, no key): forecast, current obs, historical archive, geocoding.
-- **Resolution truth:** Kalshi → NWS CLI (free, ingestable). Polymarket → Wunderground (no free
-  API; proxied by NWS/Open-Meteo). Resolving Polymarket ground-truth is a Phase 2 decision.
+- **Resolution truth:** Kalshi → NWS CLI. The official value is captured via Kalshi's
+  `expiration_value`; NWS/Open-Meteo serve as the forecast/observation proxies whose ability to
+  track that value is validated in the Phase-2 reconciliation (~1.4 °C MAE as of the Jun-20 gate).
+- **Station pinning:** some cities' resolution station differs from the geocoded centroid (e.g.
+  LA resolves on coastal LAX, not downtown). `services/collector-weather/src/station-overrides.ts`
+  curates coordinate overrides for these.
 
 ## Secrets
 
 All credentials live in `.env` (gitignored). Never hardcode keys or commit secrets. See `.env.example`.
-A funded wallet exists but is **irrelevant until Phase 7** — paper trading comes first regardless.
+Cloud collection uses GitHub Actions repo secrets. A funded wallet exists but is **irrelevant
+until a later phase** — paper trading comes first regardless.
 
 ## Communication
 

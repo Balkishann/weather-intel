@@ -1,8 +1,8 @@
 {
-  "name": "polymarket-weather-intel",
+  "name": "kalshi-weather-intel",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 1 — data collection for Polymarket daily-temperature resolution intelligence",
+  "description": "Kalshi daily-temperature resolution intelligence — append-only data collection (Phase 2)",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -13,14 +13,13 @@
     "test": "pnpm -r run test",
     "db:generate": "pnpm --filter @weather/db run generate",
     "db:migrate": "pnpm --filter @weather/db run migrate",
-    "collect:polymarket": "pnpm --filter @weather/collector-polymarket run start",
     "collect:kalshi": "pnpm --filter @weather/collector-kalshi run start",
     "collect:weather": "pnpm --filter @weather/collector-weather run start",
-    "backfill:prices": "pnpm --filter @weather/collector-polymarket run backfill",
     "backfill:kalshi": "pnpm --filter @weather/collector-kalshi run backfill",
     "backfill:weather": "pnpm --filter @weather/collector-weather run backfill",
     "report:phase1": "tsx scripts/phase1-report.ts",
-    "report:phase2": "tsx scripts/phase2-reconciliation.ts"
+    "report:phase2": "tsx scripts/phase2-reconciliation.ts",
+    "report:phase2:latency": "tsx scripts/phase2-latency.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

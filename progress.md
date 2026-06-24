@@ -1,6 +1,124 @@
 # Progress — Daily Temperature Resolution Intelligence Platform
 
-_Last updated: 2026-06-15 (session 4 — **first real reconciliation ✅**, token revoked, latency design note written; gate = Jun-20 re-run)_
+_Last updated: 2026-06-22 (session 7 — **focus pivoted to the TempEdge Polymarket paper bot on Oracle**; this Kalshi collector is now dormant — see note below)_
+
+## ⚠️ 2026-06-22 — READ FIRST: focus shifted to a SEPARATE project (TempEdge on Oracle)
+
+There are **two projects.** This repo is the **Kalshi temperature *data platform*** (Neon DB, no
+trading). The user's active priority is now **TempEdge**, a **separate Polymarket weather paper-
+trading bot** running 24/7 on an **Oracle Cloud VM** — NOT in this repo, NOT using Neon. Its own
+status/next-steps live in `~/polymweather/tempedge_vscode/progress.md` on the VM
+(`ssh -i ~/.ssh/oracle_tempedge.key ubuntu@155.248.254.3`). Plan: paper-trade all 17 listed
+cities daily, review in ~2–3 weeks, go real (user can fund $1–4 to test the order path) only if
+forward P&L beats the backtest and clears fees+spread+slippage.
+
+**State of THIS Kalshi repo as of session 7 (uncommitted, dormant):**
+- **Diagnosed why the cloud weather collector froze at Jun-15:** Open-Meteo's forecast API 429s
+  cloud IPs, and the HTTP client retried 429 with up to 4×60 s backoff → a per-city multi-minute
+  stall that blew the 25-min job timeout before writing anything. The "coverage through Jun-18"
+  was an illusion (rows fetched ≤Jun-15 with future target dates).
+- **Fix applied (uncommitted):** `packages/shared/src/http.ts` now supports per-request
+  `maxRetries`/`maxBackoffMs`; `openmeteo.ts` calls are best-effort fail-fast. Typecheck ✓, 26
+  tests ✓. NWS works fine from the Oracle IP; Open-Meteo is intermittently 429.
+- **Deployed compute to the Oracle VM** (Node 20 + pnpm, code at `~/weather-intel`, systemd
+  units `weather-collect`/`kalshi-collect` written but **NOT enabled — dormant**). A test run
+  wrote 0 forecasts because **geocoding (Open-Meteo only) is the gateway** and a flaky geocode
+  drops every city before NWS is tried.
+- **Remaining one-step fix if/when resumed:** pin the ~20 fixed US `KXHIGH*` cities in
+  `services/collector-weather/src/station-overrides.ts` (currently only LA) so the collector
+  never depends on Open-Meteo geocoding; then NWS does all the work. City→station list was
+  captured this session (Atlanta, Austin, Boston, Chicago→Midway, Dallas, Denver, Houston, Las
+  Vegas, LA→LAX, Miami, Minneapolis, New Orleans, New York→Central Park, Oklahoma City,
+  Philadelphia, Phoenix, San Antonio, San Francisco, Seattle, Washington DC).
+
+---
+
+### (Prior) session 6 summary — superseded focus but still valid for this repo
+
+_Last updated: 2026-06-20 (session 6 — **THE JUN-20 GATE PASSED ✅**; cloud confirmed live and accumulating; latency analysis now green-lit)_
+
+## Jun-20 gate result (session 6)
+
+Re-ran `report:phase2` on the gate day. **Proxies still track the official NWS-CLI value on a
+7× larger sample** — gate cleared on both accuracy and sample size:
+
+| Metric | Jun-15 (n=19) | **Jun-20** | Gate target |
+|---|---|---|---|
+| Settled high city-days | 1,339 | **1,459** | — |
+| With proxy coverage | 19 | **133** (fc) / 56 (obs) | ~100+ |
+| Observed-max MAE | 1.0 °C | **1.4 °C** (n=56) | ~1–1.5 °C |
+| Forecast-high MAE | 1.3 °C | **1.4 °C** (n=133) | ~1–1.5 °C |
+
+- **Cloud collection confirmed working without the laptop:** settled city-days +120 and proxy
+  coverage 19 → 133 since Jun-15; forecast coverage current through Jun-18. That growth is the
+  GitHub Actions schedule alone. (The laptop's local Postgres-5432 path was transiently
+  RST-blocked by the current network — Neon served valid TLS on :443 the whole time, so Neon was
+  never down; the block cleared and the report ran.)
+- **LA is now a clear SYSTEMATIC outlier, not noise:** all 7 LA days run proxy-hotter by +2.2 to
+  +6.3 °C (coastal/downtown official station KCQT vs a hotter inland proxy point). It alone
+  inflates the aggregate MAE; the rest sit comfortably under ~1 °C. Pin LA's station coords
+  before/with the latency build.
+- **Green light:** build the latency / mispricing analysis per `docs/LATENCY_ANALYSIS_DESIGN.md`
+  (read-only; still no execution).
+
+### Session 6 build work (2026-06-20, while user offline)
+
+**(b) LA station-coords fix — DONE & validated.** Root cause confirmed from the DB: Kalshi
+`KXHIGHLAX` resolves on **"Los Angeles Airport, CA" = LAX** (coastal, marine-layer), but the
+Open-Meteo geocoder returns the **downtown/inland** centroid for the string "Los Angeles" —
+so the proxy read ~+5–6 °C hot on every LA day. Fix: new
+`services/collector-weather/src/station-overrides.ts` — a curated `location → coords` override
+applied in `collect.ts` (`resolveCities`) and `backfill.ts`, pinning LA to KLAX (33.9381,
+-118.3889). **Empirically validated:** Open-Meteo at LAX reads 20.7–21.6 °C vs the official
+21.1–22.2 °C band (downtown read 23.7–26.7 °C). Typecheck ✓, all 38 tests ✓. **Forward-only**
+(append-only): historical LA rows keep old coords, so latency analysis excludes pre-fix LA days.
+- ⚠️ **Cloud picks this up only after the repo is pushed** to `Balkishann/weather-intel`
+  (needs the user's GitHub auth — no `gh`/push locally). Until pushed, the cloud still collects
+  downtown-LA. **Action for user: review + push.**
+
+**(a) Latency analysis v1 — BUILT, runs, read-only.** `scripts/phase2-latency.ts` +
+`report:phase2:latency`. Implements the design note's cleanest, irreversible signal: the
+**observed-max strike crossing** on "≥X°F or above" buckets (once the day's observed high
+reaches the strike, YES is locked — measure how long the market takes to price it to ≥0.95).
+Reports latency Δt, mispricing-at-lock (gap = 1−yes_price), spread overlay (does the gap clear
+the spread?), and a truth check vs `market_resolutions.result`. Cost overlay uses
+`market_snapshots.best_bid/ask` directly (no orderbook join needed).
+- **First run is correct but THIN — no verdict yet, as expected.** Of 1,460 settled ≥X buckets:
+  1,334 have no proxy obs for their city-day (mostly pre-Jun-12 settled), 73 LA-excluded, 52
+  obs-covered but strike never reached (NO-side, v1 skips), **1 YES-locked**. **Observation
+  coverage is the bottleneck** (only ~53 non-LA obs-covered settled ≥X buckets so far; obs
+  table is sparse, hourly, started ~Jun 12). It densifies as the cloud runs — same trajectory
+  as the reconciliation gate.
+- **The one real case is a clean illustration (not a conclusion):** Denver 2026-06-14, ≥70 °F,
+  settled YES. When our observed max crossed 70 °F the market was at **0.87 (13¢ gap > 4¢
+  spread)** and took **11 min** to reprice to ≥0.95 — a concrete instance of the hypothesized
+  info-leads-price latency. n=1: proves the pipeline measures exactly what the design intends;
+  proves nothing about the edge.
+- **Deliberately NOT built unsupervised:** the forecast-based soft `p_info` (the design note's
+  logistic of `(proxy_high − strike)/MAE`) would widen coverage to ~133 city-days, but the
+  sigma/calibration is a modeling choice that deserves the user's review (CLAUDE.md: surface
+  assumptions). Flagged as the next iteration. Range/"or below" buckets also deferred.
+- **Status: uncommitted in the working tree for review** (not committed/pushed — no explicit
+  ask). Files: `station-overrides.ts`, `collect.ts`, `backfill.ts`, `scripts/phase2-latency.ts`,
+  `package.json`, `progress.md`.
+
+**(c) Full Kalshi-only purge — DONE (user-approved).** Removed out-of-scope cruft so the repo
+matches reality:
+- **Deleted** `services/collector-polymarket/` (10 files; nothing in the Kalshi/weather/db
+  pipeline imported it), `scripts/smoke-apis.ts` (a Jun-13 one-off referenced nowhere), and
+  local `logs/*.log`.
+- **Stripped Polymarket** from `docker-compose.yml` (service), `Dockerfile` (COPY + CMD),
+  `package.json` (renamed to `kalshi-weather-intel`, removed `collect:polymarket` /
+  `backfill:prices`), and `config.ts` (default User-Agent).
+- **Rewrote `CLAUDE.md` + `README.md`** to Kalshi-only / Phase-2 (was stale "Phase 1 only",
+  Polymarket-framed).
+- **Deliberately left:** `schema.ts` `venue` column + comments (the markets table genuinely held
+  both venues historically; changing the default would force a needless DB migration — append-only),
+  `phase1-report.ts`'s "Polymarket rows are historical/parked" note (honest reporting), and
+  `docs/PHASE1_REPORT.md` (dated historical artifact). Drizzle migration meta untouched (history).
+- **Verified:** `pnpm install` clean, all 4 packages typecheck ✓, 26 tests ✓ (the 12 Polymarket
+  tests removed with the service). See [[scope-kalshi-only]].
+
 
 ## Summary (where we are · accomplished · current state · next steps)
 
@@ -46,6 +164,17 @@ _Last updated: 2026-06-15 (session 4 — **first real reconciliation ✅**, toke
   keep densifying as each day's highs settle and observations accumulate.
 - **Waiting on the Jun-20 gate:** n=19 (one day) is too thin to build the latency analysis on.
   The cloud is accumulating exactly the data the gate needs; nothing to build until it's checked.
+  **Decision (2026-06-15):** hold and let collection run unattended in the background until
+  ~Jun 20, then re-run `report:phase2` and assess confidence for Phase 3. Nothing to build until then.
+- **Cloud health-check (2026-06-15, session 5): all green.** All 3 workflows `active` (enabled).
+  Data current — DB fresh, all DQ pass-rates 100%. The weather run that looked "stuck in_progress"
+  was simply mid-cycle (~20 min in, within its 25-min timeout). One isolated `collect-kalshi`
+  failure at 16:33 (markets step) was a **transient API blip** — verified by running the same
+  `run once` locally twice (markets 510 ✓, prices 600, `failedChecks:0`); the next cycle self-recovers.
+  - **Observation (not a fault):** GitHub heavily skips/coalesces the scheduled crons (kalshi set
+    to */15 ran only ~4× on Jun-15; some hourly weather runs show `cancelled`). Typical GitHub
+    throttling of scheduled workflows on private repos + the 2,000-min/month Actions quota the
+    workflow files already flag. Making the repo public would remove both — deferred, user-decision.
 - One cosmetic leftover: a stale `prices running (0)` audit row from the cancelled first cloud run.
 
 ### Next steps

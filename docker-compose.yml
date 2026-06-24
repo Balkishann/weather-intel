@@ -38,22 +38,6 @@ services:
       postgres:
         condition: service_healthy
 
-  collector-polymarket:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: pnpm collect:polymarket
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-weather}:${POSTGRES_PASSWORD:-weather}@postgres:5432/${POSTGRES_DB:-weather}
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-
   collector-kalshi:
     build:
       context: .

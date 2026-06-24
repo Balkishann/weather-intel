@@ -1,6 +1,7 @@
 import { Repo, getDb, closeDb } from "@weather/db";
 import { HttpClient, createLogger, loadConfig, loadRootEnv } from "@weather/shared";
 import { OpenMeteoClient } from "./openmeteo.js";
+import { STATION_COORD_OVERRIDES } from "./station-overrides.js";
 
 loadRootEnv();
 
@@ -26,7 +27,8 @@ async function main() {
   try {
     const locations = await repo.temperatureLocations();
     for (const { location, resolutionStation } of locations) {
-      const geo = await om.geocode(location).catch(() => null);
+      const geo =
+        STATION_COORD_OVERRIDES[location] ?? (await om.geocode(location).catch(() => null));
       if (!geo) {
         log.warn({ location }, "could not geocode, skipping");
         continue;

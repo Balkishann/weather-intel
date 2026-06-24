@@ -5,8 +5,10 @@ name: collect-weather
 # so on a private repo this alone is ~12 min/hour ≈ 8,600 min/month — public repo recommended.
 
 on:
-  schedule:
-    - cron: "0 * * * *" # top of every hour
+  # ARCHIVED 2026-06-24: Kalshi banned in operator's country — scheduled collection
+  # disabled to stop cloud runs. Re-enable by uncommenting the schedule block below.
+  # schedule:
+  #   - cron: "0 * * * *" # top of every hour
   workflow_dispatch: {}
 
 concurrency:

@@ -7,6 +7,7 @@ import {
 } from "@weather/shared";
 import { NwsClient } from "./nws.js";
 import { OpenMeteoClient, type GeoResult } from "./openmeteo.js";
+import { STATION_COORD_OVERRIDES } from "./station-overrides.js";
 
 /**
  * Phase 1 weather collection. For every CITY referenced by a temperature market we geocode
@@ -39,10 +40,15 @@ export class WeatherCollector {
     const resolved: { city: string; station: string | null; geo: GeoResult }[] = [];
     const gaps: string[] = [];
     for (const { location, resolutionStation } of locations) {
-      let geo = this.geoCache.get(location);
+      // A curated override pins cities whose resolution station differs from the geocoded
+      // centroid (e.g. LA → LAX); when present it replaces geocoding entirely.
+      let geo: GeoResult | null | undefined = STATION_COORD_OVERRIDES[location];
       if (geo === undefined) {
-        geo = await this.openMeteo.geocode(location).catch(() => null);
-        this.geoCache.set(location, geo);
+        geo = this.geoCache.get(location);
+        if (geo === undefined) {
+          geo = await this.openMeteo.geocode(location).catch(() => null);
+          this.geoCache.set(location, geo);
+        }
       }
       if (geo) resolved.push({ city: location, station: resolutionStation, geo });
       else gaps.push(location);

@@ -46,6 +46,15 @@ export interface DailyTemp {
   lowC: number | null;
 }
 
+/**
+ * Open-Meteo is a best-effort, free upstream that rate-limits (429) some IP ranges (notably
+ * cloud/datacenter IPs). Retrying a 429 with the default long backoff turns that into a
+ * multi-minute stall per city, which previously blew the collector's whole timeout before
+ * anything was written. For US Kalshi cities NWS is the primary proxy, so we let Open-Meteo
+ * fail fast and simply skip it when it's throttled, rather than hang the run.
+ */
+const BEST_EFFORT = { maxRetries: 1, maxBackoffMs: 1500 } as const;
+
 export class OpenMeteoClient {
   constructor(private readonly http: HttpClient) {}
 
@@ -62,7 +71,7 @@ export class OpenMeteoClient {
       timezone: "UTC",
       forecast_days: String(days),
     });
-    const raw = await this.http.getJson<unknown>(`${FORECAST_BASE}?${qs.toString()}`);
+    const raw = await this.http.getJson<unknown>(`${FORECAST_BASE}?${qs.toString()}`, BEST_EFFORT);
     return { rows: toDaily(raw), raw };
   }
 
@@ -77,7 +86,7 @@ export class OpenMeteoClient {
       current: "temperature_2m",
       timezone: "UTC",
     });
-    const raw = await this.http.getJson<unknown>(`${FORECAST_BASE}?${qs.toString()}`);
+    const raw = await this.http.getJson<unknown>(`${FORECAST_BASE}?${qs.toString()}`, BEST_EFFORT);
     const parsed = ForecastResponse.parse(raw);
     return {
       observedAt: parsed.current ? new Date(`${parsed.current.time}Z`) : new Date(),
@@ -89,7 +98,7 @@ export class OpenMeteoClient {
   /** Resolve a city name to coordinates. Returns null if not found. */
   async geocode(name: string): Promise<GeoResult | null> {
     const qs = new URLSearchParams({ name, count: "1", language: "en", format: "json" });
-    const raw = await this.http.getJson<unknown>(`${GEOCODE_BASE}?${qs.toString()}`);
+    const raw = await this.http.getJson<unknown>(`${GEOCODE_BASE}?${qs.toString()}`, BEST_EFFORT);
     const r = GeocodeResponse.parse(raw).results?.[0];
     if (!r) return null;
     return {

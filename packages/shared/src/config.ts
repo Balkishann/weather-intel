@@ -37,7 +37,7 @@ const ConfigSchema = z.object({
   nwsUserAgent: z
     .string()
     .min(1)
-    .default("polymarket-weather-intel/0.1 (contact@example.com)"),
+    .default("kalshi-weather-intel/0.1 (contact@example.com)"),
   noaaCdoToken: z.string().optional(),
   cron: z.object({
     markets: z.string().default("*/10 * * * *"),
